@@ -65,13 +65,12 @@ jobs:
           CONFIG_PACKAGE_kmod-nft-tproxy=y
           CONFIG_PACKAGE_kmod-nfnetlink-queue=y
           CONFIG_PACKAGE_kmod-sched-bpf=y
-          CONFIG_PACKAGE_libu b ox-lua=y
+          CONFIG_PACKAGE_libubox-lua=y
           CONFIG_PACKAGE_lua=y
           CONFIG_PACKAGE_luci-compat=y
           CONFIG_PACKAGE_curl=y
           CONFIG_PACKAGE_ca-bundle=y
           EOF
-          sed -i 's/CONFIG_PACKAGE_libu b ox-lua=y/CONFIG_PACKAGE_libubox-lua=y/' .config
           make defconfig
           cp .config ax6-resolved.config
           grep -E 'CONFIG_TARGET_qualcommax|CONFIG_TARGET_qualcommax_ipq807x_DEVICE_redmi_ax6|CONFIG_PACKAGE_(ipq-wifi-redmi_ax6|ua3f|luci-app-passwall|luci-theme-argon|kmod-nft-queue|kmod-nft-tproxy|kmod-nfnetlink-queue|kmod-sched-bpf|libubox-lua)=' .config || true
