@@ -1,0 +1,99 @@
+name: Build Redmi AX6 UA3F + PassWall
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ua3f-passwall-ax6
+    paths:
+      - ".github/workflows/build-ax6.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ax6-firmware-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk             gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev             python3-setuptools rsync swig unzip zlib1g-dev file wget curl             time xsltproc zstd
+
+      - name: Fetch LEDE source
+        run: |
+          git clone --depth 1 https://github.com/coolsnowwolf/lede.git lede
+          cd lede
+          echo "LEDE_REV=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Add UA3F and PassWall sources
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/SunBK201/UA3F.git lede/package/UA3F
+          git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall.git lede/package/passwall-luci
+          git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git lede/package/passwall-packages
+
+      - name: Update feeds
+        working-directory: lede
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure Redmi AX6
+        working-directory: lede
+        run: |
+          set -eux
+          cat > .config <<'EOF'
+          CONFIG_TARGET_qualcommax=y
+          CONFIG_TARGET_qualcommax_ipq807x=y
+          CONFIG_TARGET_qualcommax_ipq807x_DEVICE_redmi_ax6=y
+          CONFIG_PACKAGE_ipq-wifi-redmi_ax6=y
+          CONFIG_PACKAGE_ua3f=y
+          CONFIG_PACKAGE_luci-app-passwall=y
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_kmod-nft-queue=y
+          CONFIG_PACKAGE_kmod-nft-tproxy=y
+          CONFIG_PACKAGE_kmod-nfnetlink-queue=y
+          CONFIG_PACKAGE_kmod-sched-bpf=y
+          CONFIG_PACKAGE_libu b ox-lua=y
+          CONFIG_PACKAGE_lua=y
+          CONFIG_PACKAGE_luci-compat=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_ca-bundle=y
+          EOF
+          sed -i 's/CONFIG_PACKAGE_libu b ox-lua=y/CONFIG_PACKAGE_libubox-lua=y/' .config
+          make defconfig
+          cp .config ax6-resolved.config
+          grep -E 'CONFIG_TARGET_qualcommax|CONFIG_TARGET_qualcommax_ipq807x_DEVICE_redmi_ax6|CONFIG_PACKAGE_(ipq-wifi-redmi_ax6|ua3f|luci-app-passwall|luci-theme-argon|kmod-nft-queue|kmod-nft-tproxy|kmod-nfnetlink-queue|kmod-sched-bpf|libubox-lua)=' .config || true
+
+      - name: Download sources
+        working-directory: lede
+        run: make download -j"$(nproc)" V=s
+
+      - name: Compile firmware
+        working-directory: lede
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" V=s 2>&1 | tee build.log
+
+      - name: Upload firmware and build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ax6-ua3f-passwall-build
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            lede/bin/targets/qualcommax/ipq807x/
+            lede/build.log
+            lede/ax6-resolved.config
