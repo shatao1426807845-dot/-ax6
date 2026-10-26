@@ -100,13 +100,30 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          for f in "$GITHUB_WORKSPACE"/output/*.ipk; do
-            echo "=== $f ==="
-            ar p "$f" control.tar.gz | tar -xzOf - ./control
-          done
-          ar p "$GITHUB_WORKSPACE/output/"dogcom*.ipk control.tar.gz | tar -xzOf - ./control | grep -E '^Architecture: aarch64_cortex-a53$'
-          ar p "$GITHUB_WORKSPACE/output/"luci-app-dogcom*.ipk control.tar.gz | tar -xzOf - ./control | grep -E '^Architecture: all$'
-          ar p "$GITHUB_WORKSPACE/output/"luci-app-dogcom*.ipk data.tar.gz | tar -tzf - | grep -q 'etc/uci-defaults/luci-app-dogcom'
+          python3 - <<'PY'
+          import glob, io, os, tarfile
+          packages = glob.glob("output/*.ipk")
+          assert len(packages) == 2, f"Expected exactly two IPKs, got {packages}"
+          for path in packages:
+              with tarfile.open(path, "r:*") as outer:
+                  names = outer.getnames()
+                  control_name = next(n for n in names if n.lstrip("./") == "control.tar.gz")
+                  data_name = next(n for n in names if n.lstrip("./") == "data.tar.gz")
+                  control = tarfile.open(fileobj=io.BytesIO(outer.extractfile(control_name).read()), mode="r:gz")
+                  meta = next(m for m in control.getmembers() if m.name.lstrip("./") == "control")
+                  fields = dict(line.split(": ", 1) for line in control.extractfile(meta).read().decode().splitlines() if ": " in line)
+                  print(os.path.basename(path), "Package=", fields.get("Package"), "Version=", fields.get("Version"), "Architecture=", fields.get("Architecture"), "Depends=", fields.get("Depends"))
+                  if fields.get("Package") == "dogcom":
+                      assert fields.get("Architecture") == "aarch64_cortex-a53", fields
+                  elif fields.get("Package") == "luci-app-dogcom":
+                      assert fields.get("Architecture") == "all", fields
+                      data = tarfile.open(fileobj=io.BytesIO(outer.extractfile(data_name).read()), mode="r:gz")
+                      data_names = [n.lstrip("./") for n in data.getnames()]
+                      assert "etc/uci-defaults/luci-app-dogcom" in data_names, data_names
+                      assert "etc/init.d/dogcom" in data_names, data_names
+                  else:
+                      raise AssertionError(f"Unexpected package {fields.get('Package')}")
+          PY
 
       - name: Upload IPK packages
         uses: actions/upload-artifact@v4
