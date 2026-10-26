@@ -1,0 +1,71 @@
+name: Build dogcom packages for Redmi AX6
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-dogcom-ax6.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+            gettext git libncurses-dev libssl-dev python3 python3-setuptools \
+            rsync unzip zlib1g-dev file wget curl zstd
+
+      - name: Download OpenWrt 24.10.2 SDK for qualcommax/ipq807x
+        run: |
+          set -eux
+          SDK_URL="https://downloads.openwrt.org/releases/24.10.2/targets/qualcommax/ipq807x/openwrt-sdk-24.10.2-qualcommax-ipq807x_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+          curl -fL --retry 3 "$SDK_URL" -o /tmp/openwrt-sdk.tar.zst
+          mkdir -p "$GITHUB_WORKSPACE/sdk"
+          tar --zstd -xf /tmp/openwrt-sdk.tar.zst -C "$GITHUB_WORKSPACE/sdk" --strip-components=1
+
+      - name: Fetch upstream dogcom projects
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE/sdk"
+          git clone --depth 1 https://github.com/mchome/openwrt-dogcom.git package/openwrt-dogcom
+          git clone --depth 1 https://github.com/mchome/luci-app-dogcom.git package/luci-app-dogcom
+
+      - name: Build dogcom and LuCI package
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE/sdk"
+          make defconfig
+          make package/openwrt-dogcom/compile -j2 V=s
+          make package/luci-app-dogcom/compile -j2 V=s
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find bin/packages -type f \( -name 'dogcom*.ipk' -o -name 'luci-app-dogcom*.ipk' \) -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          test -f "$GITHUB_WORKSPACE/output/dogcom_v1.6.2-1_aarch64_cortex-a53.ipk" || find "$GITHUB_WORKSPACE/output" -maxdepth 1 -name 'dogcom*.ipk' -print -quit | grep -q .
+          test -f "$GITHUB_WORKSPACE/output/luci-app-dogcom_1.0.2-1_all.ipk"
+
+      - name: Validate package architecture and metadata
+        run: |
+          set -eux
+          for f in "$GITHUB_WORKSPACE"/output/*.ipk; do
+            echo "=== $f ==="
+            ar p "$f" control.tar.gz | tar -xzOf - ./control || true
+          done
+          ar p "$GITHUB_WORKSPACE/output/"dogcom*.ipk control.tar.gz | tar -xzOf - ./control | grep -E '^Architecture: aarch64_cortex-a53$'
+          ar p "$GITHUB_WORKSPACE/output/"luci-app-dogcom*.ipk control.tar.gz | tar -xzOf - ./control | grep -E '^Architecture: all$'
+          ar p "$GITHUB_WORKSPACE/output/"luci-app-dogcom*.ipk data.tar.gz | tar -tzf - | grep -q 'etc/uci-defaults/luci-app-dogcom'
+
+      - name: Upload IPK packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: dogcom-redmi-ax6-openwrt-24.10
+          path: output/*.ipk
+          if-no-files-found: error
+          retention-days: 14
